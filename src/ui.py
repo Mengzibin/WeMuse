@@ -41,6 +41,41 @@ FONT_H = ("PingFang SC", 13, "bold")
 FONT_SM = ("PingFang SC", 11)
 
 
+def _install_accepts_first_mouse() -> bool:
+    """给所有 NSWindow 注入 `acceptsFirstMouse:` 始终返回 YES 的实现。
+
+    macOS 默认行为：app 不在前台时，点击它的窗口只用来"激活 app"——这次点击
+    不会传给窗口内的按钮/控件。用户必须**点第二次**才能真正触发按钮。
+    这就是 Tkinter 在 macOS 上的"点击不灵敏"。
+
+    解决：在 ObjC 运行时层面，把 NSWindow 的 `acceptsFirstMouse:` 改成恒返回
+    YES。Tk 创建的所有 NSWindow 自动受益，无需改 Tk 源码。
+    """
+    try:
+        import objc
+        from AppKit import NSWindow
+
+        def _accepts_first_mouse(self, event):  # noqa: ARG001
+            return True
+
+        new_sel = objc.selector(
+            _accepts_first_mouse,
+            selector=b"acceptsFirstMouse:",
+            signature=b"c@:@",  # c = BOOL, self, _cmd, event
+        )
+        # classAddMethods 会把原实现替换掉（pyobjc 文档明确支持这种用法）
+        objc.classAddMethods(NSWindow, [new_sel])
+        print("[ui] NSWindow.acceptsFirstMouse: → YES 已注入", flush=True)
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"[ui] acceptsFirstMouse 注入失败: {e}", flush=True)
+        return False
+
+
+# 模块导入时立刻注入（必须在创建 Tk 主窗口之前生效）
+_install_accepts_first_mouse()
+
+
 class AssistantWindow:
     def __init__(self) -> None:
         self.root = tk.Tk()
