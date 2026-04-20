@@ -625,16 +625,29 @@ class AssistantWindow:
             return
         n = max(1, int(self.num_sentences_var.get() or 1))
 
-        # 多句模式：按行切，取前 n 行作为独立消息
+        # 决定走单条还是多条发送
+        payload: "str | list[str]"
         if n > 1:
             lines = [ln.strip() for ln in reply.splitlines() if ln.strip()]
             if len(lines) >= 2:
-                payload: "str | list[str]" = lines[:n]
+                payload = lines[:n]
                 self._set_status(f"正在依次发送 {len(payload)} 条…", OK_FG)
+                print(
+                    f"[on_send] 多句模式 · 句数设置={n} · 实际切出 {len(lines)} 行 · 取前 {len(payload)}",
+                    flush=True,
+                )
+                for idx, ln in enumerate(payload, 1):
+                    print(f"[on_send]   行{idx}: {ln}", flush=True)
             else:
-                payload = reply  # 模型只输出了一条，按单句发
+                # 句数 > 1 但模型只给了 1 行 —— 按单条发
+                payload = reply
+                print(
+                    f"[on_send] 句数={n} 但模型只输出 1 行，回退单句发送：{reply[:40]}",
+                    flush=True,
+                )
         else:
             payload = reply
+            print(f"[on_send] 单句模式: {reply[:40]}", flush=True)
 
         # 子线程：多句之间有 sleep，主线程要保持响应
         def _worker() -> None:

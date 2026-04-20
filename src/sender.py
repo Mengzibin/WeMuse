@@ -76,11 +76,16 @@ def send_to_wechat(
 
     Args:
         text_or_lines: 单条 str 或多条 list[str]。多条会作为独立消息依次发送。
-        press_enter: True = 粘贴后回车发送；False = 只粘贴不发送（多条模式下仍按顺序粘贴）
+        press_enter: True = 粘贴后发送键；False = 只粘贴不发送
         inter_delay: 多条之间的停顿（秒），避免微信判定为连发 spam
 
     Returns:
         (success, human_readable_status)
+
+    Note:
+      发送键用的是 **⌘+Enter**（而不是单独 Enter）。原因：WeChat Mac 的"发送快捷键"
+      有两种用户配置——默认是 Enter 发送，部分用户开启了 Cmd+Enter 发送。⌘+Enter
+      在这两种配置下**都能触发发送**，而单独的 Enter 在第二种配置下只会换行不发送。
     """
     if not _READY:
         return False, f"macOS 框架不可用：{_IMPORT_ERR}"
@@ -94,20 +99,32 @@ def send_to_wechat(
     if not lines:
         return False, "内容为空"
 
+    print(
+        f"[sender] send_to_wechat: {len(lines)} 条 · press_enter={press_enter} · inter_delay={inter_delay}s",
+        flush=True,
+    )
+
     if not activate_wechat():
         return False, "未找到 WeChat 进程（未启动或未登录？）"
 
     # 等微信拿到焦点 + 输入框聚焦
-    time.sleep(0.25)
+    time.sleep(0.35)
 
     try:
         for i, line in enumerate(lines):
             pyperclip.copy(line)
             time.sleep(0.08)  # 等系统剪贴板生效
             _post_key(_KEYCODE_V, cmd=True)
+            print(
+                f"[sender]  [{i+1}/{len(lines)}] 粘贴: {line[:30]}{'…' if len(line) > 30 else ''}",
+                flush=True,
+            )
             if press_enter:
-                time.sleep(0.12)
-                _post_key(_KEYCODE_RETURN)
+                # 粘贴后等 WeChat 更新输入框状态再按发送键
+                time.sleep(0.18)
+                # ⌘+Enter 在 WeChat 两种"发送快捷键"配置下都能发
+                _post_key(_KEYCODE_RETURN, cmd=True)
+                print(f"[sender]  [{i+1}/{len(lines)}] ⌘+Enter 已发送", flush=True)
             if i < len(lines) - 1:
                 time.sleep(inter_delay)
     except Exception as e:  # noqa: BLE001
