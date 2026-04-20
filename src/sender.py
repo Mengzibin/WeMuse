@@ -112,16 +112,16 @@ def send_to_wechat(
     text_or_lines: "str | list[str]",
     press_enter: bool = True,
     inter_delay: float = 0.4,
-    send_key: str = "enter",
 ) -> tuple[bool, str]:
-    """把文字贴到 WeChat 输入框。
+    """把文字贴到 WeChat 输入框，可选地按 Enter 发送。
 
     Args:
         text_or_lines: 单条 str 或多条 list[str]。多条作为独立消息依次发送。
-        press_enter: True = 粘贴后触发发送；False = 只粘贴不发送
+        press_enter: True = 粘贴后按 Enter 发送；False = 只粘贴不发送
         inter_delay: 多条之间的停顿（秒）
-        send_key: 发送快捷键——"enter"（默认，对应 WeChat 默认设置）或
-                  "cmd_enter"（对应 WeChat 设置里勾了"⌘+Enter 发送消息"的场景）
+
+    发送键固定用 **Enter**（对应 WeChat 默认设置：Enter=发送 / Shift+Enter=换行）。
+    如果你的 WeChat 勾选了 "⌘+Enter 发送"，请在微信设置里改回默认。
     """
     if not _READY:
         return False, f"macOS 框架不可用：{_IMPORT_ERR}"
@@ -135,7 +135,7 @@ def send_to_wechat(
         return False, "内容为空"
 
     print(
-        f"[sender] send_to_wechat: {len(lines)} 条 · press_enter={press_enter} · send_key={send_key} · inter_delay={inter_delay}s",
+        f"[sender] send_to_wechat: {len(lines)} 条 · press_enter={press_enter} · inter_delay={inter_delay}s",
         flush=True,
     )
 
@@ -156,8 +156,6 @@ def send_to_wechat(
     # 给 WeChat 更充足的时间拿焦点 + 聚焦到输入框
     time.sleep(0.5)
 
-    use_cmd_for_enter = send_key == "cmd_enter"
-
     try:
         for i, line in enumerate(lines):
             pyperclip.copy(line)
@@ -170,11 +168,9 @@ def send_to_wechat(
             if press_enter:
                 # 粘贴到回车之间留 0.6s，确保 WeChat 已经把内容写入输入框 AXValue
                 time.sleep(0.6)
-                _press_return(cmd=use_cmd_for_enter)
+                _press_return(cmd=False)  # 固定用 Enter，不再走 ⌘+Enter
                 print(
-                    f"[sender]  [{i+1}/{len(lines)}] "
-                    f"{'⌘+' if use_cmd_for_enter else ''}Enter 已发",
-                    flush=True,
+                    f"[sender]  [{i+1}/{len(lines)}] Enter 已发", flush=True
                 )
             if i < len(lines) - 1:
                 time.sleep(inter_delay)

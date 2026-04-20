@@ -58,7 +58,6 @@ class AssistantWindow:
         self.style_var = tk.StringVar(value=DEFAULT_STYLE)
         self.extra_var = tk.StringVar()
         self.num_sentences_var = tk.IntVar(value=1)  # 回复句数：1 = 单句，>1 = 多句连发
-        self.send_key_var = tk.StringVar(value="enter")  # 发送键: "enter" | "cmd_enter"
         self._last_capture_path: str | None = None
         self._thumb_image: ImageTk.PhotoImage | None = None
         self._last_prompt: str | None = None  # 最近一次发给 Claude 的 prompt（供查看）
@@ -208,17 +207,6 @@ class AssistantWindow:
             textvariable=self.num_sentences_var,
             state="readonly",
         ).pack(side=tk.LEFT)
-
-        # 发送键：跟 WeChat「设置→通用→用 ⌘Enter 发送消息」对应
-        ttk.Label(extra_row, text="发送键").pack(side=tk.LEFT, padx=(10, 2))
-        send_key_cb = ttk.Combobox(
-            extra_row,
-            textvariable=self.send_key_var,
-            values=["enter", "cmd_enter"],
-            state="readonly",
-            width=10,
-        )
-        send_key_cb.pack(side=tk.LEFT)
 
         # ---------- Row 6: 生成按钮行 ----------
         action = ttk.Frame(self.root)
@@ -661,14 +649,11 @@ class AssistantWindow:
             payload = reply
             print(f"[on_send] 单句模式: {reply[:40]}", flush=True)
 
-        send_key = self.send_key_var.get() or "enter"
-        print(f"[on_send] press_enter={press_enter}  send_key={send_key}", flush=True)
+        print(f"[on_send] press_enter={press_enter}", flush=True)
 
         # 子线程：多句之间有 sleep，主线程要保持响应
         def _worker() -> None:
-            ok, msg = send_to_wechat(
-                payload, press_enter=press_enter, send_key=send_key
-            )
+            ok, msg = send_to_wechat(payload, press_enter=press_enter)
             self.root.after(
                 0, lambda: self._set_status(msg, OK_FG if ok else ERR_FG)
             )
