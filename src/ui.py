@@ -57,6 +57,7 @@ class AssistantWindow:
         self.mimic_var = tk.BooleanVar(value=True)
         self.style_var = tk.StringVar(value=DEFAULT_STYLE)
         self.extra_var = tk.StringVar()
+        self.num_sentences_var = tk.IntVar(value=1)  # 回复句数：1 = 单句，>1 = 多句连发
         self._last_capture_path: str | None = None
         self._thumb_image: ImageTk.PhotoImage | None = None
         self._last_prompt: str | None = None  # 最近一次发给 Claude 的 prompt（供查看）
@@ -180,11 +181,10 @@ class AssistantWindow:
         for c in range(cols):
             style_frame.columnconfigure(c, weight=1)
 
-        # ---------- Row 5: 额外要求 ----------
+        # ---------- Row 5: 额外要求 + 句数 ----------
         extra_row = ttk.Frame(self.root)
         extra_row.pack(fill=tk.X, padx=PX, pady=4)
         ttk.Label(extra_row, text="额外要求").pack(side=tk.LEFT)
-        # 用 tk.Entry（而不是 ttk.Entry）：aqua 主题下 ttk.Entry 与中文输入法偶发冲突
         entry = tk.Entry(
             extra_row,
             textvariable=self.extra_var,
@@ -195,9 +195,18 @@ class AssistantWindow:
             bd=0,
             highlightthickness=1,
             highlightbackground=BORDER,
-            insertbackground=TEXT_FG,  # 光标颜色
+            insertbackground=TEXT_FG,
         )
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, ipady=4)
+        ttk.Label(extra_row, text="句数").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Spinbox(
+            extra_row,
+            from_=1,
+            to=5,
+            width=3,
+            textvariable=self.num_sentences_var,
+            state="readonly",  # 只让点 ▲▼，不让键盘输入（避免乱打字）
+        ).pack(side=tk.LEFT)
 
         # ---------- Row 6: 生成按钮行 ----------
         action = ttk.Frame(self.root)
@@ -397,9 +406,19 @@ class AssistantWindow:
 
     def _generate_worker(self, chat: str, style: str, extra: str) -> None:
         try:
-            prompt = build_prompt(chat, style, extra, mimic_user=self.mimic_var.get())
-            self._last_prompt = prompt  # 存起来供「查看 Prompt」
-            print(f"[llm] 生成中 · style={style} · prompt {len(prompt)} 字", flush=True)
+            n = max(1, int(self.num_sentences_var.get() or 1))
+            prompt = build_prompt(
+                chat,
+                style,
+                extra,
+                mimic_user=self.mimic_var.get(),
+                num_sentences=n,
+            )
+            self._last_prompt = prompt
+            print(
+                f"[llm] 生成中 · style={style} · sentences={n} · prompt {len(prompt)} 字",
+                flush=True,
+            )
             # 开始前清空回复区，流式 chunk 来一条 append 一条
             self.root.after(0, lambda: self.reply_text.delete("1.0", tk.END))
 
@@ -451,9 +470,15 @@ class AssistantWindow:
 
     def _multi_worker(self, i: int, style: str, chat: str, extra: str) -> None:
         try:
-            prompt = build_prompt(chat, style, extra, mimic_user=self.mimic_var.get())
+            n = max(1, int(self.num_sentences_var.get() or 1))
+            prompt = build_prompt(
+                chat,
+                style,
+                extra,
+                mimic_user=self.mimic_var.get(),
+                num_sentences=n,
+            )
             if i == 0:
-                # 保存第一条的 prompt（风格不同但框架一致）供查看
                 self._last_prompt = prompt
             reply = generate_reply(prompt)
             self.root.after(0, lambda: self._show_candidate(i, style, reply))
@@ -598,10 +623,29 @@ class AssistantWindow:
         if not reply:
             messagebox.showwarning("提示", "当前没有待发送的回复。先点「✨ 生成回复」。")
             return
-        ok, msg = send_to_wechat(reply, press_enter=press_enter)
-        self._set_status(msg, OK_FG if ok else ERR_FG)
-        if not ok:
-            messagebox.showerror("发送失败", msg)
+        n = max(1, int(self.num_sentences_var.get() or 1))
+
+        # 多句模式：按行切，取前 n 行作为独立消息
+        if n > 1:
+            lines = [ln.strip() for ln in reply.splitlines() if ln.strip()]
+            if len(lines) >= 2:
+                payload: "str | list[str]" = lines[:n]
+                self._set_status(f"正在依次发送 {len(payload)} 条…", OK_FG)
+            else:
+                payload = reply  # 模型只输出了一条，按单句发
+        else:
+            payload = reply
+
+        # 子线程：多句之间有 sleep，主线程要保持响应
+        def _worker() -> None:
+            ok, msg = send_to_wechat(payload, press_enter=press_enter)
+            self.root.after(
+                0, lambda: self._set_status(msg, OK_FG if ok else ERR_FG)
+            )
+            if not ok:
+                self.root.after(0, lambda: messagebox.showerror("发送失败", msg))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ---------------------- lifecycle ----------------------
 
