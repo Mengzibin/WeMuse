@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temp
+*.log
+.DS_Store
+/tmp_*
+
+# Sensitive / local config（如果未来加了 secrets.json 之类）
+secrets.json
+.env
