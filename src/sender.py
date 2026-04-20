@@ -15,7 +15,9 @@ try:
         CGEventCreateKeyboardEvent,
         CGEventPost,
         CGEventSetFlags,
+        CGEventSourceCreate,
         kCGEventFlagMaskCommand,
+        kCGEventSourceStateHIDSystemState,
         kCGHIDEventTap,
     )
 
@@ -27,9 +29,23 @@ except Exception as e:  # noqa: BLE001
 
 WECHAT_BUNDLE = "com.tencent.xinWeChat"
 
-# macOS 虚拟键码
+# macOS 虚拟键码 (kVK_*)
 _KEYCODE_V = 9
 _KEYCODE_RETURN = 36
+_KEYCODE_CMD_LEFT = 55  # 0x37 — 用它显式模拟 Cmd 键的按下和抬起，避免 flag 残留
+
+# 事件源：用 HIDSystemState 让合成的事件更接近真实硬件键盘
+_event_source = None
+
+
+def _get_event_source():
+    global _event_source
+    if _event_source is None and _READY:
+        try:
+            _event_source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
+        except Exception:  # noqa: BLE001
+            _event_source = None
+    return _event_source
 
 
 def activate_wechat() -> bool:
@@ -55,16 +71,41 @@ def activate_wechat() -> bool:
     return False
 
 
-def _post_key(keycode: int, cmd: bool = False) -> None:
-    """发一次 key-down + key-up。cmd=True 时附带 ⌘ 修饰符。"""
-    down = CGEventCreateKeyboardEvent(None, keycode, True)
+def _post_event(keycode: int, down: bool, flags: int = 0) -> None:
+    """发一个 key-down 或 key-up 事件。**永远显式 CGEventSetFlags**，避免继承残留。"""
+    src = _get_event_source()
+    ev = CGEventCreateKeyboardEvent(src, keycode, down)
+    CGEventSetFlags(ev, flags)  # 就算 flags=0 也要调，不要依赖默认
+    CGEventPost(kCGHIDEventTap, ev)
+
+
+def _paste_cmd_v() -> None:
+    """显式序列模拟 ⌘V: Cmd-down → V-down(带 Cmd flag) → V-up(带 Cmd flag) → Cmd-up。
+
+    相比只在 V 事件上设 Cmd flag，这样做让 macOS 能清楚看到 Cmd 的按下-抬起，
+    避免后续的 Enter 被某些 app 误判为"Cmd 还按着"或"带有别的修饰符"。
+    """
+    _post_event(_KEYCODE_CMD_LEFT, True, 0)
+    time.sleep(0.02)
+    _post_event(_KEYCODE_V, True, kCGEventFlagMaskCommand)
+    _post_event(_KEYCODE_V, False, kCGEventFlagMaskCommand)
+    time.sleep(0.02)
+    _post_event(_KEYCODE_CMD_LEFT, False, 0)
+
+
+def _press_return(cmd: bool = False) -> None:
+    """按 Enter 或 ⌘+Enter，同样用显式序列（和 _paste_cmd_v 一致）。"""
     if cmd:
-        CGEventSetFlags(down, kCGEventFlagMaskCommand)
-    CGEventPost(kCGHIDEventTap, down)
-    up = CGEventCreateKeyboardEvent(None, keycode, False)
-    if cmd:
-        CGEventSetFlags(up, kCGEventFlagMaskCommand)
-    CGEventPost(kCGHIDEventTap, up)
+        _post_event(_KEYCODE_CMD_LEFT, True, 0)
+        time.sleep(0.02)
+        _post_event(_KEYCODE_RETURN, True, kCGEventFlagMaskCommand)
+        _post_event(_KEYCODE_RETURN, False, kCGEventFlagMaskCommand)
+        time.sleep(0.02)
+        _post_event(_KEYCODE_CMD_LEFT, False, 0)
+    else:
+        # 纯 Enter：两个事件都显式 flags=0，防止有残留修饰符
+        _post_event(_KEYCODE_RETURN, True, 0)
+        _post_event(_KEYCODE_RETURN, False, 0)
 
 
 def send_to_wechat(
@@ -115,22 +156,21 @@ def send_to_wechat(
     # 给 WeChat 更充足的时间拿焦点 + 聚焦到输入框
     time.sleep(0.5)
 
-    # 根据配置决定发送键
     use_cmd_for_enter = send_key == "cmd_enter"
 
     try:
         for i, line in enumerate(lines):
             pyperclip.copy(line)
             time.sleep(0.1)  # 等系统剪贴板生效
-            _post_key(_KEYCODE_V, cmd=True)
+            _paste_cmd_v()
             print(
                 f"[sender]  [{i+1}/{len(lines)}] 粘贴: {line[:30]}{'…' if len(line) > 30 else ''}",
                 flush=True,
             )
             if press_enter:
-                # 粘贴到回车之间留 0.45s，确保 WeChat 已经把内容写入输入框
-                time.sleep(0.45)
-                _post_key(_KEYCODE_RETURN, cmd=use_cmd_for_enter)
+                # 粘贴到回车之间留 0.6s，确保 WeChat 已经把内容写入输入框 AXValue
+                time.sleep(0.6)
+                _press_return(cmd=use_cmd_for_enter)
                 print(
                     f"[sender]  [{i+1}/{len(lines)}] "
                     f"{'⌘+' if use_cmd_for_enter else ''}Enter 已发",
